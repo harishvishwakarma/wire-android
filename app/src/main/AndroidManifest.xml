@@ -29,6 +29,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Cache user data -->
     <!-- File Sharing -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <!-- Communicate with backend servers -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -90,11 +91,7 @@
             >
 
             <intent-filter>
-                <data
-                    android:host="password-reset-successful"
-                    android:scheme="${customURLScheme}"
-                    />
-
+                <data android:scheme="${customURLScheme}" />
                 <action android:name="android.intent.action.VIEW" />
 
                 <category android:name="android.intent.category.DEFAULT" />
@@ -102,20 +99,12 @@
                 <category android:name="android.intent.category.VIEW" />
             </intent-filter>
 
-            <intent-filter>
-                <data
-                    android:host="start-sso"
-                    android:scheme="${customURLScheme}"
-                    />
-
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <category android:name="android.intent.category.VIEW" />
-            </intent-filter>
         </activity>
 
+        <activity
+            android:name=".security.SecureActivity"
+            android:launchMode="singleTask"
+            />
         <activity
             android:name="com.waz.zclient.calling.CallingActivity"
             android:hardwareAccelerated="true"
@@ -200,7 +189,6 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <category android:name="android.intent.category.VIEW" />
             </intent-filter>
-
         </activity>
 
         <activity

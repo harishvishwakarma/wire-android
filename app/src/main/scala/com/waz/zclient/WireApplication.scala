@@ -18,6 +18,7 @@
 package com.waz.zclient
 
 import java.io.File
+import java.net.{InetSocketAddress, Proxy}
 import java.util.Calendar
 
 import android.app.{Activity, ActivityManager, NotificationManager}
@@ -29,6 +30,7 @@ import android.renderscript.RenderScript
 import android.support.multidex.MultiDexApplication
 import android.support.v4.app.{FragmentActivity, FragmentManager}
 import android.telephony.TelephonyManager
+import android.util.Log
 import com.evernote.android.job.{JobCreator, JobManager}
 import com.google.android.gms.security.ProviderInstaller
 import com.waz.api.NetworkMode
@@ -36,10 +38,11 @@ import com.waz.background.WorkManagerSyncRequestService
 import com.waz.content._
 import com.waz.jobs.PushTokenCheckJob
 import com.waz.log.BasicLogging.LogTag.DerivedLogTag
-import com.waz.log.{AndroidLogOutput, BufferedLogOutput, InternalLog}
+import com.waz.log._
 import com.waz.model._
 import com.waz.permissions.PermissionsService
 import com.waz.service._
+import com.waz.service.assets2._
 import com.waz.service.call.GlobalCallingService
 import com.waz.service.conversation.{ConversationsService, ConversationsUiService, SelectedConversationService}
 import com.waz.service.images.ImageLoader
@@ -48,18 +51,19 @@ import com.waz.service.tracking.TrackingService
 import com.waz.services.fcm.FetchJob
 import com.waz.services.gps.GoogleApiImpl
 import com.waz.services.websocket.WebSocketController
+import com.waz.sync.client.CustomBackendClient
 import com.waz.sync.{SyncHandler, SyncRequestService}
 import com.waz.threading.Threading
 import com.waz.utils.SafeBase64
 import com.waz.utils.events.{EventContext, Signal}
 import com.waz.utils.wrappers.GoogleApi
 import com.waz.zclient.appentry.controllers.{CreateTeamController, InvitationsController}
+import com.waz.zclient.assets2.{AndroidImageRecoder, AndroidUriHelper, AssetDetailsServiceImpl, AssetPreviewServiceImpl}
 import com.waz.zclient.calling.controllers.{CallController, CallStartController}
 import com.waz.zclient.camera.controllers.{AndroidCameraFactory, GlobalCameraController}
 import com.waz.zclient.collection.controllers.CollectionController
 import com.waz.zclient.common.controllers._
 import com.waz.zclient.common.controllers.global.{AccentColorController, ClientsController, KeyboardController, PasswordController}
-import com.waz.zclient.common.views.ImageController
 import com.waz.zclient.controllers._
 import com.waz.zclient.controllers.camera.ICameraController
 import com.waz.zclient.controllers.confirmation.IConfirmationController
@@ -69,10 +73,11 @@ import com.waz.zclient.controllers.location.ILocationController
 import com.waz.zclient.controllers.navigation.INavigationController
 import com.waz.zclient.controllers.singleimage.ISingleImageController
 import com.waz.zclient.controllers.userpreferences.IUserPreferencesController
-import com.waz.zclient.conversation.{ConversationController, ReplyController}
 import com.waz.zclient.conversation.creation.CreateConversationController
+import com.waz.zclient.conversation.{ConversationController, ReplyController}
 import com.waz.zclient.conversationlist.ConversationListController
 import com.waz.zclient.cursor.CursorController
+import com.waz.zclient.deeplinks.DeepLinkService
 import com.waz.zclient.log.LogUI._
 import com.waz.zclient.messages.controllers.{MessageActionsController, NavigationController}
 import com.waz.zclient.messages.{LikesController, MessagePagedListController, MessageViewFactory, MessagesController, UsersController}
@@ -84,19 +89,24 @@ import com.waz.zclient.pages.main.pickuser.controller.IPickUserController
 import com.waz.zclient.participants.ParticipantsController
 import com.waz.zclient.preferences.PreferencesController
 import com.waz.zclient.tracking.{CrashController, GlobalTrackingController, UiTrackingController}
-import com.waz.zclient.utils.{AndroidBase64Delegate, BackStackNavigator, BackendPicker, Callback, ExternalFileSharing, LocalThumbnailCache, UiStorage}
+import com.waz.zclient.utils.{AndroidBase64Delegate, BackStackNavigator, BackendController, ExternalFileSharing, LocalThumbnailCache, UiStorage}
 import com.waz.zclient.views.DraftMap
 import javax.net.ssl.SSLContext
 import org.threeten.bp.Clock
 
 import scala.concurrent.Future
+import scala.util.Try
 import scala.util.control.NonFatal
 
 object WireApplication extends DerivedLogTag {
   var APP_INSTANCE: WireApplication = _
 
+  def ensureInitialized(): Boolean =
+    if (Option(APP_INSTANCE).isEmpty) false // too early
+    else APP_INSTANCE.ensureInitialized()
+
   type AccountToImageLoader = (UserId) => Future[Option[ImageLoader]]
-  type AccountToAssetsStorage = (UserId) => Future[Option[AssetsStorage]]
+  type AccountToAssetsStorage = (UserId) => Future[Option[AssetStorage]]
   type AccountToUsersStorage = (UserId) => Future[Option[UsersStorage]]
   type AccountToConvsStorage = (UserId) => Future[Option[ConversationStorage]]
   type AccountToConvsService = (UserId) => Future[Option[ConversationsService]]
@@ -146,6 +156,8 @@ object WireApplication extends DerivedLogTag {
     bind [TrackingService]                to inject[GlobalModule].trackingService
     bind [PermissionsService]             to inject[GlobalModule].permissions
     bind [MetaDataService]                to inject[GlobalModule].metadata
+    bind [LogsService]                    to inject[GlobalModule].logsService
+    bind [CustomBackendClient]            to inject[GlobalModule].customBackendClient
 
     import com.waz.threading.Threading.Implicits.Background
     bind [AccountToImageLoader]   to (userId => inject[AccountsService].getZms(userId).map(_.map(_.imageLoader)))
@@ -170,7 +182,8 @@ object WireApplication extends DerivedLogTag {
     bind [Signal[UsersStorage]]                  to inject[Signal[ZMessaging]].map(_.usersStorage)
     bind [Signal[MembersStorage]]                to inject[Signal[ZMessaging]].map(_.membersStorage)
     bind [Signal[OtrClientsStorage]]             to inject[Signal[ZMessaging]].map(_.otrClientsStorage)
-    bind [Signal[AssetsStorage]]                 to inject[Signal[ZMessaging]].map(_.assetsStorage)
+    bind [Signal[AssetStorage]]                  to inject[Signal[ZMessaging]].map(_.assetsStorage)
+    bind [Signal[AssetService]]                  to inject[Signal[ZMessaging]].map(_.assetService)
     bind [Signal[MessagesStorage]]               to inject[Signal[ZMessaging]].map(_.messagesStorage)
     bind [Signal[ImageLoader]]                   to inject[Signal[ZMessaging]].map(_.imageLoader)
     bind [Signal[MessagesService]]               to inject[Signal[ZMessaging]].map(_.messages)
@@ -179,6 +192,7 @@ object WireApplication extends DerivedLogTag {
     bind [Signal[MessageAndLikesStorage]]        to inject[Signal[ZMessaging]].map(_.msgAndLikes)
     bind [Signal[ReadReceiptsStorage]]           to inject[Signal[ZMessaging]].map(_.readReceiptsStorage)
     bind [Signal[ReactionsStorage]]              to inject[Signal[ZMessaging]].map(_.reactionsStorage)
+    bind [Signal[FCMNotificationStatsService]]   to inject[Signal[ZMessaging]].map(_.fcmNotStatsService)
 
     // old controllers
     // TODO: remove controller factory, reimplement those controllers
@@ -196,6 +210,7 @@ object WireApplication extends DerivedLogTag {
     bind [IConfirmationController]       toProvider controllerFactory.getConfirmationController
 
     // global controllers
+    bind [BackendController]       to new BackendController()
     bind [WebSocketController]     to new WebSocketController
     bind [CrashController]         to new CrashController
     bind [AccentColorController]   to new AccentColorController()
@@ -217,7 +232,6 @@ object WireApplication extends DerivedLogTag {
 
     bind [GlobalTrackingController]        to new GlobalTrackingController()
     bind [PreferencesController]           to new PreferencesController()
-    bind [ImageController]                 to new ImageController()
     bind [UserAccountsController]          to new UserAccountsController()
 
     bind [LocalThumbnailCache]              to LocalThumbnailCache(ctx)
@@ -247,6 +261,14 @@ object WireApplication extends DerivedLogTag {
 
     bind [ClipboardUtils]       to new ClipboardUtils(ctx)
     bind [ExternalFileSharing]  to new ExternalFileSharing(ctx)
+
+    bind [DeepLinkService]      to new DeepLinkService()
+
+    bind [UriHelper] to new AndroidUriHelper(ctx)
+
+    bind[MediaRecorderController] to new MediaRecorderControllerImpl(ctx)
+
+    KotlinServices.INSTANCE.init(ctx)
   }
 
   def controllers(implicit ctx: WireContext) = new Module {
@@ -292,7 +314,7 @@ object WireApplication extends DerivedLogTag {
     bind[MessagePagedListController] to new MessagePagedListController()
   }
 
-  protected def clearOldVideoFiles(context: Context): Unit = {
+  def clearOldVideoFiles(context: Context): Unit = {
     val oneWeekAgo = Calendar.getInstance
     oneWeekAgo.add(Calendar.DAY_OF_YEAR, -7)
     Option(context.getExternalCacheDir).foreach { dir =>
@@ -312,6 +334,8 @@ object WireApplication extends DerivedLogTag {
 class WireApplication extends MultiDexApplication with WireContext with Injectable {
   type NetworkSignal = Signal[NetworkMode]
   import WireApplication._
+  import scala.concurrent.ExecutionContext.Implicits.global
+
   WireApplication.APP_INSTANCE = this
 
   override def eventContext: EventContext = EventContext.Global
@@ -341,10 +365,13 @@ class WireApplication extends MultiDexApplication with WireContext with Injectab
 
     SafeBase64.setDelegate(new AndroidBase64Delegate)
 
-    if (BuildConfig.LOGGING_ENABLED) {
-      InternalLog.add(new AndroidLogOutput(showSafeOnly = BuildConfig.SAFE_LOGGING))
-      InternalLog.add(new BufferedLogOutput(baseDir = getApplicationContext.getApplicationInfo.dataDir,
-        showSafeOnly = BuildConfig.SAFE_LOGGING))
+    ZMessaging.globalReady.future.onSuccess {
+      case _ =>
+        InternalLog.setLogsService(inject[LogsService])
+        InternalLog.add(new AndroidLogOutput(showSafeOnly = BuildConfig.SAFE_LOGGING))
+        InternalLog.add(new BufferedLogOutput(
+          baseDir = getApplicationContext.getApplicationInfo.dataDir,
+          showSafeOnly = BuildConfig.SAFE_LOGGING))
     }
 
     verbose(l"onCreate")
@@ -353,13 +380,24 @@ class WireApplication extends MultiDexApplication with WireContext with Injectab
 
     controllerFactory = new ControllerFactory(getApplicationContext)
 
-    new BackendPicker(this).withBackend(new Callback[BackendConfig]() {
-      def callback(be: BackendConfig) = ensureInitialized(be)
-    }, Backend.ProdBackend)
+    ensureInitialized()
   }
 
-  def ensureInitialized(backend: BackendConfig) = {
+  private[waz] def ensureInitialized(): Boolean =
+    if (Option(ZMessaging.currentGlobal).isDefined) true // the app is initialized, nothing to do here
+    else
+      try {
+        inject[BackendController].getStoredBackendConfig.fold(false){ config =>
+          ensureInitialized(config)
+          true
+        }
+      } catch {
+        case t: Throwable =>
+          Log.e(WireApplication.getClass.getName, "Failed to initialize the app", t)
+          false
+      }
 
+  def ensureInitialized(backend: BackendConfig): Unit = {
     JobManager.create(this).addJobCreator(new JobCreator {
       override def create(tag: String) =
         if      (tag.contains(FetchJob.Tag))          new FetchJob
@@ -370,14 +408,30 @@ class WireApplication extends MultiDexApplication with WireContext with Injectab
     val prefs = GlobalPreferences(this)
     val googleApi = GoogleApiImpl(this, backend, prefs)
 
+    val assets2Module = new Assets2Module {
+      override def uriHelper: UriHelper = inject[UriHelper]
+      override def assetDetailsService: AssetDetailsService =
+        new AssetDetailsServiceImpl(uriHelper)(getApplicationContext, Threading.BlockingIO)
+      override def assetPreviewService: AssetPreviewService =
+        new AssetPreviewServiceImpl()(getApplicationContext, Threading.BlockingIO)
+
+      override def assetsTransformationsService: AssetTransformationsService =
+        new AssetTransformationsServiceImpl(
+          List(
+            new ImageDownscalingCompressing(new AndroidImageRecoder)
+          )
+        )
+    }
+
     ZMessaging.onCreate(
       this,
       backend,
+      parseProxy(BuildConfig.HTTP_PROXY_URL, BuildConfig.HTTP_PROXY_PORT),
       prefs,
       googleApi,
       null, //TODO: Use sync engine's version for now
-      inject[MessageNotificationsController]
-    )
+      inject[MessageNotificationsController],
+      assets2Module)
 
     inject[NotificationManagerWrapper]
     inject[ImageNotificationsController]
@@ -389,6 +443,31 @@ class WireApplication extends MultiDexApplication with WireContext with Injectab
     inject[ThemeController]
     inject[PreferencesController]
     Future(clearOldVideoFiles(getApplicationContext))(Threading.Background)
+    Future(checkForPlayServices(prefs, googleApi))(Threading.Background)
+  }
+
+  private def parseProxy(url: String, port: String): Option[Proxy] = {
+    val proxyHost = if(!url.equalsIgnoreCase("none")) Some(url) else None
+    val proxyPort = Try(Integer.parseInt(port)).toOption
+    (proxyHost, proxyPort) match {
+      case (Some(h), Some(p)) => Some(new Proxy(Proxy.Type.HTTP, new InetSocketAddress(h, p)))
+      case proxyInfo => None
+    }
+
+  }
+
+  private def checkForPlayServices(prefs: GlobalPreferences, googleApi: GoogleApi): Unit = {
+    val gps = prefs(GlobalPreferences.CheckedForPlayServices)
+    gps.signal.head.collect {
+      case false =>
+        verbose(l"never checked for play services")
+        googleApi.isGooglePlayServicesAvailable.head.foreach { gpsAvailable =>
+          for {
+            _ <- prefs(GlobalPreferences.WsForegroundKey) := !gpsAvailable
+            _ <- gps := true
+          } yield ()
+        }
+    }
   }
 
   override def onTerminate(): Unit = {
@@ -405,3 +484,4 @@ class WireApplication extends MultiDexApplication with WireContext with Injectab
     super.onTerminate()
   }
 }
+

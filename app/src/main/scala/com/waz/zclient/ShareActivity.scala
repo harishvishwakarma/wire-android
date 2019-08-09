@@ -38,6 +38,7 @@ import com.waz.zclient.common.controllers.SharingController
 import com.waz.zclient.common.controllers.SharingController.{FileContent, ImageContent}
 import com.waz.zclient.common.controllers.global.AccentColorController
 import com.waz.zclient.controllers.confirmation.TwoButtonConfirmationCallback
+import com.waz.zclient.Intents.RichIntent
 import com.waz.zclient.log.LogUI._
 import com.waz.zclient.sharing.ShareToMultipleFragment
 import com.waz.zclient.views.menus.ConfirmationMenu
@@ -91,8 +92,7 @@ class ShareActivity extends BaseActivity with ActivityHelper {
   private def handleIncomingIntent() =
     inject[PermissionsService].requestAllPermissions(ListSet(READ_EXTERNAL_STORAGE)).map {
       case true =>
-        val intent = getIntent
-        verbose(l"$intent")
+        verbose(l"${RichIntent(getIntent)}")
         val ir = ShareCompat.IntentReader.from(this)
         if (!ir.isShareIntent) finish()
         else {
@@ -101,7 +101,6 @@ class ShareActivity extends BaseActivity with ActivityHelper {
             val uris =
               (if (ir.isMultipleShare) (0 until ir.getStreamCount).flatMap(i => Option(ir.getStream(i))) else Option(ir.getStream).toSeq)
                 .flatMap(uri => getPath(getApplicationContext, uri))
-
             if (uris.nonEmpty)
               sharing.sharableContent ! Some(if (ir.getType.startsWith("image/") && uris.size == 1) ImageContent(uris) else FileContent(uris))
             else finish()

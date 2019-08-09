@@ -24,7 +24,7 @@ import android.support.v4.app.{Fragment, FragmentManager}
 import android.view.{LayoutInflater, View, ViewGroup}
 import com.waz.api.MessageContent
 import com.waz.model.{MessageContent => _, _}
-import com.waz.service.assets.AssetService.RawAssetInput
+import com.waz.service.assets2.{Content, ContentForUpload}
 import com.waz.service.tracking.GroupConversationEvent
 import com.waz.threading.Threading
 import com.waz.zclient.camera.CameraFragment
@@ -105,7 +105,7 @@ class ConversationManagerFragment extends FragmentHelper
 
         screenController.showMessageDetails ! None
 
-        participantsController.onShowAnimations ! false
+        participantsController.onLeaveParticipants ! false
       } else if (!change.noChange) {
         collectionController.closeCollection()
       }
@@ -122,14 +122,14 @@ class ConversationManagerFragment extends FragmentHelper
       showFragment(ParticipantFragment.newInstance(childTag), ParticipantFragment.TAG)
     }
 
-    subs += participantsController.onShowParticipantsWithUserId.onUi { user =>
+    subs += participantsController.onShowParticipantsWithUserId.onUi { p =>
       keyboard.hideKeyboardIfVisible()
       navigationController.setRightPage(Page.PARTICIPANT, ConversationManagerFragment.Tag)
-      participantsController.selectParticipant(user)
-      showFragment(ParticipantFragment.newInstance(user), ParticipantFragment.TAG)
+      participantsController.selectParticipant(p.userId)
+      showFragment(ParticipantFragment.newInstance(p.userId, p.fromDeepLink), ParticipantFragment.TAG)
     }
 
-    subs += participantsController.onShowAnimations.onUi { withAnimations =>
+    subs += participantsController.onLeaveParticipants.onUi { withAnimations =>
       navigationController.setRightPage(Page.MESSAGE_STREAM, ConversationManagerFragment.Tag)
 
       if (withAnimations)
@@ -163,8 +163,8 @@ class ConversationManagerFragment extends FragmentHelper
     subs += screenController.hideGiphy.onUi(_ => hideFragment(GiphySharingPreviewFragment.Tag))
 
     subs += screenController.showSketch.onUi { sketch =>
-        import DrawingFragment._
-        showFragment(newInstance(sketch), Tag, Page.DRAWING)
+      import DrawingFragment._
+      showFragment(newInstance(sketch), Tag, Page.DRAWING)
     }
     subs += screenController.hideSketch.onUi { dest =>
       hideFragment(DrawingFragment.Tag)
@@ -223,9 +223,9 @@ class ConversationManagerFragment extends FragmentHelper
     navigationController.setRightPage(Page.MESSAGE_STREAM, ConversationManagerFragment.Tag)
   }
 
-  override def onBitmapSelected(input: RawAssetInput, cameraContext: CameraContext): Unit =
+  override def onBitmapSelected(content: Content, cameraContext: CameraContext): Unit =
     if (cameraContext == CameraContext.MESSAGE) {
-      inject[ConversationController].sendMessage(input)
+      inject[ConversationController].sendAssetMessage(ContentForUpload(s"photo_${AESKey().str}", content))
       cameraController.closeCamera(CameraContext.MESSAGE)
   }
 

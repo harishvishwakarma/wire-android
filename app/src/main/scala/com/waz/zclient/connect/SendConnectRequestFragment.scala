@@ -23,6 +23,7 @@ import android.os.Bundle
 import android.view.animation.Animation
 import android.view.{LayoutInflater, View, ViewGroup}
 import android.widget.ImageView
+import com.bumptech.glide.request.RequestOptions
 import com.waz.model.UserId
 import com.waz.service.ZMessaging
 import com.waz.threading.Threading
@@ -30,14 +31,14 @@ import com.waz.utils.events.{ClockSignal, Signal}
 import com.waz.utils.returning
 import com.waz.zclient.common.controllers.global.{AccentColorController, KeyboardController}
 import com.waz.zclient.common.controllers.{ThemeController, UserAccountsController}
-import com.waz.zclient.common.views.ImageAssetDrawable
-import com.waz.zclient.common.views.ImageAssetDrawable.{RequestBuilder, ScaleType}
-import com.waz.zclient.common.views.ImageController.WireImage
 import com.waz.zclient.connect.PendingConnectRequestFragment.ArgUserRequester
+import com.waz.zclient.controllers.navigation.{INavigationController, Page}
 import com.waz.zclient.conversation.ConversationController
+import com.waz.zclient.glide.WireGlide
 import com.waz.zclient.messages.UsersController
 import com.waz.zclient.pages.BaseFragment
 import com.waz.zclient.pages.main.connect.UserProfileContainer
+import com.waz.zclient.pages.main.conversation.controller.IConversationScreenController
 import com.waz.zclient.pages.main.participants.ProfileAnimation
 import com.waz.zclient.pages.main.pickuser.controller.IPickUserController
 import com.waz.zclient.paintcode.GuestIcon
@@ -70,6 +71,7 @@ class SendConnectRequestFragment
   private lazy val accentColorController = inject[AccentColorController]
   private lazy val zms = inject[Signal[ZMessaging]]
   private lazy val themeController = inject[ThemeController]
+  private lazy val navController = inject[INavigationController]
 
   private lazy val user = usersController.user(userToConnectId)
 
@@ -78,11 +80,18 @@ class SendConnectRequestFragment
     permission <- userAccountsController.hasRemoveConversationMemberPermission(convId)
   } yield permission && userRequester == UserRequester.PARTICIPANTS
 
+  private lazy val returnPage =
+    if (userRequester == UserRequester.PARTICIPANTS || userRequester == UserRequester.DEEP_LINK)
+      Page.CONVERSATION_LIST
+    else
+      Page.PICK_USER
+
   private lazy val connectButton = returning(view[ZetaButton](R.id.zb__send_connect_request__connect_button)) { vh =>
     accentColorController.accentColor.map(_.color).onUi { color => vh.foreach(_.setAccentColor(color)) }
     vh.onClick { _ =>
       usersController.connectToUser(userToConnectId).foreach(_.foreach { _ =>
         keyboardController.hideKeyboardIfVisible()
+        navController.setLeftPage(returnPage, SendConnectRequestFragment.Tag)
         getContainer.onConnectRequestWasSentToUser()
       })
     }
@@ -98,7 +107,7 @@ class SendConnectRequestFragment
       }
     }
     removeConvMemberFeatureEnabled.map {
-      case true => getString(R.string.glyph__minus)
+      case true => getString(R.string.glyph__more)
       case _ => ""
     }.onUi(text => vh.foreach(_.setRightActionText(text)))
   }
@@ -170,12 +179,9 @@ class SendConnectRequestFragment
     guestIndicatorTimer
     guestIndicatorIcon
 
-    val assetDrawable = new ImageAssetDrawable(
-      user.map(_.picture).collect { case Some(p) => WireImage(p) },
-      scaleType = ScaleType.CenterInside,
-      request = RequestBuilder.Round
-    )
-    imageViewProfile.foreach(_.setImageDrawable(assetDrawable))
+    user.map(_.picture).collect { case Some(p) => p }.onUi { id =>
+      imageViewProfile.foreach(WireGlide(context).load(id).apply(new RequestOptions().circleCrop()).into(_))
+    }
 
     val backgroundContainer = findById[View](R.id.background_container)
     backgroundContainer.setClickable(true)
@@ -196,9 +202,12 @@ class SendConnectRequestFragment
         case _ =>
       }
 
-      override def onRightActionClicked(): Unit = removeConvMemberFeatureEnabled.head foreach {
+      override def onRightActionClicked(): Unit = removeConvMemberFeatureEnabled.head.foreach {
         case true =>
-          getContainer.showRemoveConfirmation(userToConnectId)
+          conversationController.currentConv.head.foreach { conv =>
+            if (conv.isActive)
+              inject[IConversationScreenController].showConversationMenu(false, conv.id)
+          }
         case _ =>
       }
     }))
@@ -219,6 +228,7 @@ class SendConnectRequestFragment
   }
 
   override def onBackPressed(): Boolean = {
+    navController.setLeftPage(returnPage, SendConnectRequestFragment.Tag)
     inject[IPickUserController].hideUserProfile()
     true
   }

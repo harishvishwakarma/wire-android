@@ -22,7 +22,6 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.support.v4.app.ActivityCompat
 import android.support.v4.content.ContextCompat
-import android.support.v7.app.AppCompatActivity
 import com.waz.log.BasicLogging.LogTag.DerivedLogTag
 import com.waz.log.InternalLog
 import com.waz.permissions.PermissionsService
@@ -31,18 +30,19 @@ import com.waz.service.{UiLifeCycle, ZMessaging}
 import com.waz.services.websocket.WebSocketService
 import com.waz.threading.{CancellableFuture, Threading}
 import com.waz.utils.returning
+import com.waz.zclient.Intents.RichIntent
 import com.waz.zclient.common.controllers.ThemeController
 import com.waz.zclient.controllers.IControllerFactory
+import com.waz.zclient.log.LogUI._
+import com.waz.zclient.security.SecureActivity
 import com.waz.zclient.tracking.GlobalTrackingController
 import com.waz.zclient.utils.ViewUtils
-import com.waz.zclient.log.LogUI._
 
 import scala.collection.breakOut
 import scala.collection.immutable.ListSet
 import scala.concurrent.duration._
 
-
-class BaseActivity extends AppCompatActivity
+class BaseActivity extends SecureActivity
   with ServiceContainer
   with ActivityHelper
   with PermissionProvider
@@ -99,7 +99,7 @@ class BaseActivity extends AppCompatActivity
   def getBaseTheme: Int = themeController.forceLoadDarkTheme
 
   override protected def onActivityResult(requestCode: Int, resultCode: Int, data: Intent) = {
-    verbose(l"onActivityResult: requestCode: $requestCode, resultCode: $resultCode, data: $data")
+    verbose(l"onActivityResult: requestCode: $requestCode, resultCode: $resultCode, data: ${RichIntent(data)}")
     super.onActivityResult(requestCode, resultCode, data)
     permissions.registerProvider(this)
   }

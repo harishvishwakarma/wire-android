@@ -17,13 +17,14 @@
  */
 package com.waz.zclient.log
 
-import android.content.Intent
 import com.evernote.android.job.Job
 import com.waz.avs.VideoPreview
 import com.waz.log.LogShow
 import com.waz.service.tracking.TrackingEvent
 import com.waz.zclient.Intents.RichIntent
 import com.waz.zclient.collection.controllers.CollectionController.ContentType
+import com.waz.zclient.common.views.ChatHeadView.{ChatHeadViewOptions, CropShape, OverlayIcon}
+import com.waz.zclient.glide.{AssetKey, AssetRequest}
 import com.waz.zclient.log.LogUI._
 import com.waz.zclient.messages.MessageView.MsgBindOptions
 import com.waz.zclient.messages.UsersController.DisplayName
@@ -33,28 +34,29 @@ import com.waz.zclient.search.SearchController.SearchUserListState
   * A collection of implicit `LogShow` instances for UI types.
   */
 trait LogShowInstancesUI {
-  
-  implicit val JobLogShow: LogShow[Job] = LogShow.logShowWithHash
+  import LogShow._
 
-  implicit val IntentLogShow: LogShow[Intent] = LogShow.logShowWithHash
+  implicit val AssetRequestLogShow: LogShow[AssetRequest] = logShowWithHash
+  implicit val AssetKeyLogShow: LogShow[AssetKey] = logShowWithHash
+
+  implicit val JobLogShow: LogShow[Job] = LogShow.logShowWithHash
 
   implicit val RichIntentLogShow: LogShow[RichIntent] =
     LogShow.createFrom { i =>
       l"""
          |Intent(
-         |  action:           ${redactedString(i.intent.getAction)}
-         |  flags:            ${redactedString(i.intent.getFlags.toString)}
-         |  extras:           ${redactedString(i.intent.getExtras.toString)}
-         |  categories:       ${redactedString(i.intent.getCategories.toString)}
-         |  data:             ${redactedString(i.intent.getDataString)}
-         |  fromNotification: ${i.fromNotification}
-         |  fromSharing:      ${i.intent.fromSharing}
-         |  startCall:        ${i.intent.startCall}
-         |  accountId:        ${i.accountId}
-         |  convId:           ${i.convId}
+         |  action:           ${i.getAction.map(redactedString)},
+         |  flags:            ${redactedString(i.getFlags.toString)},
+         |  extras:           ${i.getExtras.map(e => redactedString(e.toString))},
+         |  data:             ${i.getDataString.map(redactedString)},
+         |  fromNotification: ${i.fromNotification},
+         |  fromSharing:      ${i.fromSharing},
+         |  startCall:        ${i.startCall},
+         |  accountId:        ${i.accountId},
+         |  convId:           ${i.convId},
          |  page:             ${i.page.map(redactedString)})
-       """.stripMargin
-    }
+        """.stripMargin
+  }
 
   implicit val SearchUserListStateLogShow: LogShow[SearchUserListState] =
     LogShow.createFrom {
@@ -105,5 +107,20 @@ trait LogShowInstancesUI {
   implicit val ContentTypeLogShow: LogShow[ContentType] =
     LogShow.createFrom { t =>
       l"ContentType(msgTypes: ${t.msgTypes}, typeFilter: ${t.typeFilter})"
+    }
+
+  implicit val CropShapeLogShow: LogShow[CropShape] =
+    LogShow.createFrom(c => l"${showString(c.toString)}")
+
+  implicit val OverlayIconLogShow: LogShow[OverlayIcon] =
+    LogShow.createFrom(o => l"${showString(o.toString)}")
+
+  implicit val ChatHeadViewOptionsLogShow: LogShow[ChatHeadViewOptions] =
+    LogShow.createFrom { c =>
+      import c._
+      l"""ChatHeadViewOptions(picture: $picture, backgroundColor: $backgroundColor,
+          | grayScale: $grayScale, initials: ${showString(initials)}, cropShape: $cropShape,
+          | icon: $icon)
+       """.stripMargin
     }
 }
